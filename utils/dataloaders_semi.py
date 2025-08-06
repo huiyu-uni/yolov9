@@ -736,7 +736,7 @@ class LoadImagesAndLabels(Dataset):
         output_labels = []
         crops = None
         num_pseudo_imgs = 1
-        num_pseudo_crops = 10
+        num_pseudo_crops = 20
         maximum_iou=0.0
         
         if self.augment:
@@ -1263,7 +1263,7 @@ def find_txt_file(root_path, target_filename):
             return os.path.join(dirpath, target_filename)
     return None
 
-def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5):
+def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5, pad=100, zoom_factor=0.5):
     
     # moth / non-moths crops
     crops = []
@@ -1296,7 +1296,16 @@ def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5):
         
         # Load labels with formatting [label, u1, v1, w, h, score]
         # 0: Moth, 1: Non-Moth
+        pseudo_labels = []
         for each_label in lb:
+            category, xyxy, score = each_label[0], xywhn2xyxy(each_label[1:5], im.shape[1], im.shape[0]), each_label[5]
+            pseudo_labels.append({
+                'category': category, 'xyxy': xyxy.tolist(), 'score': score
+        })
+        
+        
+        for each_idx, each_label in enumerate(lb):
+            crops_list = [pl['xyxy'] for pl in pseudo_labels]
             category, xyxy, score = each_label[0], xywhn2xyxy(each_label[1:5], im.shape[1], im.shape[0]), each_label[5]
 
             ### TODO: Select only moth crops with 0.7 confidence
@@ -1306,16 +1315,32 @@ def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5):
                 # Save image crop as {file} with crop size multiple {gain} and {pad} pixels. Save and/or return crop
                 xyxy = torch.tensor(xyxy).view(-1, 4)
                 clip_boxes(xyxy, im.shape)
-                crop = im[int(xyxy[0, 1]):int(xyxy[0, 3]), int(xyxy[0, 0]):int(xyxy[0, 2]), ::(1 if BGR else -1)]
+                
+                # Add paddings to rectangular crops to mitigate edge effect 
+                min_x = int(xyxy[0, 1]-pad)
+                max_x = int(xyxy[0, 3]+pad)
+                min_y = int(xyxy[0, 0]-pad)
+                max_y = int(xyxy[0, 2]+pad)
+                
+                # Check whether the padded crop is still within the original image
+                if min_x > 0 and min_y > 0 and max_x < im.shape[0] and max_y < im.shape[1]:
+                    crop = im[min_x:max_x, min_y:max_y, ::(1 if BGR else -1)]
+                else: continue
+                
+                del crops_list[each_idx]
+                if len(crops_list) > 1 and torch.max(box_iou(xyxy, torch.tensor(crops_list).view(-1, 4))) > 0.0:
+                    continue
+                
+                # crop = im[int(xyxy[0, 1]):int(xyxy[0, 3]), int(xyxy[0, 0]):int(xyxy[0, 2]), ::(1 if BGR else -1)]
                 
                 ### Resize
-                # crop = cv2.resize(crop, (0,0), fx=0.5, fy=0.5)  
+                crop = cv2.resize(crop, (0,0), fx=zoom_factor, fy=zoom_factor)      
                 crops.append([crop, category])
                 # crops.append([crop, 0])
         
     return crops
     
-def paste_in(img, crops, max_crops=10, orig_labels=[], max_iou=0.0):
+def paste_in(img, crops, max_crops=10, orig_labels=[], max_iou=0.0, pad=100, zoom_factor=0.5):
     output_img = img.copy()
     labels = []
     h_base, w_base = output_img.shape[:2]
@@ -1353,13 +1378,19 @@ def paste_in(img, crops, max_crops=10, orig_labels=[], max_iou=0.0):
             continue
         
         picked_boxes.append(xyxy_lst)
-        # # Paste the crop
-        # output_img[y:y+h_crop, x:x+w_crop] = crop
+        # Paste the crop
+        output_img[y:y+h_crop, x:x+w_crop] = crop
         
-        ### Adding smoother edges by poisson blending
-        mask = 255 * np.ones(crop.shape[:2], dtype=np.uint8)
-        center = (x + int(w_crop / 2), y + int(h_crop / 2))
-        output_img = cv2.seamlessClone(crop, output_img, mask, center, cv2.NORMAL_CLONE)
+        # ### Adding smoother edges by poisson blending
+        # mask = 255 * np.ones(crop.shape[:2], dtype=np.uint8)
+        # center = (x + int(w_crop / 2), y + int(h_crop / 2))
+        # output_img = cv2.seamlessClone(crop, output_img, mask, center, cv2.NORMAL_CLONE)
+        
+        # Add resized paddings to crops
+        xyxy[0][0] += pad*zoom_factor
+        xyxy[0][1] += pad*zoom_factor
+        xyxy[0][2] -= pad*zoom_factor
+        xyxy[0][3] -= pad*zoom_factor
         
         lst = [float(category)]
         lst.extend(xyxy2xywhn(xyxy, w_base, h_base)[0].tolist())
