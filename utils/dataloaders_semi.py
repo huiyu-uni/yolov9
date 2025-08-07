@@ -484,7 +484,7 @@ class LoadImagesAndLabels(Dataset):
         self.max_num_pseudo_crops_paste_in = max_num_pseudo_crops_paste_in
         self.max_num_crops = max_num_crops
         self.maximum_iou = maximum_iou
-        self.pad = pad_crop
+        self.pad_crop = pad_crop
         self.zoom_factor = zoom_factor
         self.threshold_list = threshold_list
 
