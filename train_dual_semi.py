@@ -496,6 +496,7 @@ def parse_opt(known=False):
     parser.add_argument('--min-items', type=int, default=0, help='Experimental')
     parser.add_argument('--close-mosaic', type=int, default=0, help='Experimental')
 
+    # Paste-in hyper-parameters
     parser.add_argument('--num-pseudo-imgs', type=int, default=1, help='Paste-in hyps')
     parser.add_argument('--max-num-pseudo-crops-paste-in', type=int, default=50, help='Paste-in hyps')
     parser.add_argument('--max-num-crops', type=int, default=100, help='Paste-in hyps')
