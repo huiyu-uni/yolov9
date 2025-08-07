@@ -113,7 +113,14 @@ def create_dataloader(path,
                       quad=False,
                       min_items=0,
                       prefix='',
-                      shuffle=False):
+                      shuffle=False,
+                      num_pseudo_imgs=1,
+                      max_num_pseudo_crops_paste_in=50,
+                      max_num_crops=100,
+                      maximum_iou=0.0,
+                      pad_crop=100,
+                      zoom_factor=0.5,
+                      threshold_list=[0.7, 1.0]):
     if rect and shuffle:
         LOGGER.warning('WARNING ⚠️ --rect is incompatible with DataLoader shuffle, setting shuffle=False')
         shuffle = False
@@ -131,7 +138,14 @@ def create_dataloader(path,
             pad=pad,
             image_weights=image_weights,
             min_items=min_items,
-            prefix=prefix)
+            prefix=prefix,
+            num_pseudo_imgs=num_pseudo_imgs,
+            max_num_pseudo_crops_paste_in=max_num_pseudo_crops_paste_in,
+            max_num_crops=max_num_crops,
+            maximum_iou=maximum_iou,
+            pad_crop=pad_crop,
+            zoom_factor=zoom_factor,
+            threshold_list=threshold_list)
 
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
@@ -446,7 +460,14 @@ class LoadImagesAndLabels(Dataset):
                  stride=32,
                  pad=0.0,
                  min_items=0,
-                 prefix=''):
+                 prefix='',
+                 num_pseudo_imgs=1,
+                 max_num_pseudo_crops_paste_in=50,
+                 max_num_crops=100,
+                 maximum_iou=0.0,
+                 pad_crop=100,
+                 zoom_factor=0.5,
+                 threshold_list=[0.7, 1.0]):
         self.img_size = img_size
         self.augment = augment
         self.hyp = hyp
@@ -457,6 +478,15 @@ class LoadImagesAndLabels(Dataset):
         self.stride = stride
         self.path = path
         self.albumentations = Albumentations(size=img_size) if augment else None
+        # For crops caching
+        self.crops = []
+        self.num_pseudo_imgs = num_pseudo_imgs
+        self.max_num_pseudo_crops_paste_in = max_num_pseudo_crops_paste_in
+        self.max_num_crops = max_num_crops
+        self.maximum_iou = maximum_iou
+        self.pad = pad_crop
+        self.zoom_factor = zoom_factor
+        self.threshold_list = threshold_list
 
         try:
             f = []  # image files
@@ -734,15 +764,21 @@ class LoadImagesAndLabels(Dataset):
         ### TODO: Load corresponding pseudo-labels
         ### Initial setup
         output_labels = []
-        crops = None
-        num_pseudo_imgs = 1
-        num_pseudo_crops = 20
-        maximum_iou=0.0
+        new_crops = None
         
         if self.augment:
-            crops = load_crops_from_unlabeled_dataset('/home/yu/Documents/AMMOD/nid-dataset/unlabeled.txt',
-                                                        '/home/yu/Documents/AMMOD/yolov9/runs/detect/pseudo-labels',
-                                                            num_pseudo_imgs)
+            # Extract new crops
+            new_crops = load_crops_from_unlabeled_dataset(img_paths='/home/yu/Documents/AMMOD/nid-dataset/unlabeled.txt',
+                                                      pseudo_labels_dir='/home/yu/Documents/AMMOD/yolov9/runs/detect/pseudo-labels',
+                                                      num_imgs=self.num_pseudo_imgs,
+                                                      pad=self.pad_crop,
+                                                      zoom_factor=self.zoom_factor,
+                                                      threshold_list=self.threshold_list)
+            # Cachinng crops
+            self.crops = caching_balance(self.crops, new_crops=new_crops, max_size=self.max_num_crops)
+        
+            print(f'Size of the new crops is : {len(new_crops)}')
+            print(f'Size of the caching crops is : {len(self.crops)}')
         
         # Loads 1 image from dataset index 'i', returns (im, original hw, resized hw)
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i],
@@ -754,8 +790,14 @@ class LoadImagesAndLabels(Dataset):
                 assert im is not None, f'Image Not Found {f}'
             
             if self.augment:
-                ### TODO: Paste-In insect crops to img with certain probability (0.3)
-                im, output_labels = paste_in(im, crops, num_pseudo_crops, labels, maximum_iou) 
+                # Paste-In insect crops to img
+                im, output_labels = paste_in(img=im, 
+                                             crops=self.crops, 
+                                             max_crops=self.max_num_pseudo_crops_paste_in, 
+                                             orig_labels=labels, 
+                                             max_iou=self.maximum_iou,
+                                             pad=self.pad_crop,
+                                             zoom_factor=self.zoom_factor) 
                         
             h0, w0 = im.shape[:2]  # orig hw
             r = self.img_size / max(h0, w0)  # ratio
@@ -765,9 +807,14 @@ class LoadImagesAndLabels(Dataset):
             return im, (h0, w0), im.shape[:2], output_labels  # im, hw_original, hw_resized
 
         if self.augment:
-            ### TODO: Paste-In insect crops to img with certain probability (0.3)
-            im, output_labels = paste_in(im, crops, num_pseudo_crops, labels, maximum_iou) 
-    
+            # Paste-In insect crops to img
+            im, output_labels = paste_in(img=im, 
+                                            crops=self.crops, 
+                                            max_crops=self.max_num_pseudo_crops_paste_in, 
+                                            orig_labels=labels, 
+                                            max_iou=self.maximum_iou,
+                                            pad=self.pad_crop,
+                                            zoom_factor=self.zoom_factor) 
         return self.ims[i], self.im_hw0[i], self.im_hw[i], output_labels  # im, hw_original, hw_resized
 
     def cache_images_to_disk(self, i):
@@ -1263,7 +1310,12 @@ def find_txt_file(root_path, target_filename):
             return os.path.join(dirpath, target_filename)
     return None
 
-def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5, pad=100, zoom_factor=0.5):
+def load_crops_from_unlabeled_dataset(img_paths, 
+                                      pseudo_labels_dir, 
+                                      num_imgs=5, 
+                                      pad=100, 
+                                      zoom_factor=0.5,
+                                      threshold_list=[0.7, 1.0]):
     
     # moth / non-moths crops
     crops = []
@@ -1310,7 +1362,8 @@ def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5, 
 
             ### TODO: Select only moth crops with 0.7 confidence
             # if (category == 0 and score > 0.7) or (category == 1 and score > 0.8):
-            if (category == 0 and score > 0.7):
+            if (category == 0 and score > threshold_list[0]) or (category == 1 and score > threshold_list[1]):
+            # if (category == 0 and score > 0.7):
             # if (category == 0 and score > 0.7) or (category == 1 and score > 0.7):
                 # Save image crop as {file} with crop size multiple {gain} and {pad} pixels. Save and/or return crop
                 xyxy = torch.tensor(xyxy).view(-1, 4)
@@ -1340,7 +1393,13 @@ def load_crops_from_unlabeled_dataset(img_paths, pseudo_labels_dir, num_imgs=5, 
         
     return crops
     
-def paste_in(img, crops, max_crops=10, orig_labels=[], max_iou=0.0, pad=100, zoom_factor=0.5):
+def paste_in(img, 
+             crops, 
+             max_crops=10, 
+             orig_labels=[], 
+             max_iou=0.0, 
+             pad=100, 
+             zoom_factor=0.5):
     output_img = img.copy()
     labels = []
     h_base, w_base = output_img.shape[:2]
@@ -1397,3 +1456,12 @@ def paste_in(img, crops, max_crops=10, orig_labels=[], max_iou=0.0, pad=100, zoo
         labels.append(lst)
         
     return output_img, labels
+
+def caching_balance(crops, new_crops, max_size=100):
+    # Caching crops with fixed size of 100
+    crops.extend(new_crops)
+    
+    if len(crops) > max_size:
+        diff = len(crops) - max_size
+        del crops[:diff]
+    return crops

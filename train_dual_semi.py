@@ -205,7 +205,14 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                               quad=opt.quad,
                                               prefix=colorstr('train: '),
                                               shuffle=True,
-                                              min_items=opt.min_items)
+                                              min_items=opt.min_items,
+                                              num_pseudo_imgs=opt.num_pseudo_imgs,
+                                              max_num_pseudo_crops_paste_in=opt.max_num_pseudo_crops_paste_in,
+                                              max_num_crops=opt.max_num_crops,
+                                              maximum_iou=opt.maximum_iou,
+                                              pad_crop=opt.pad_crop,
+                                              zoom_factor=opt.zoom_factor,
+                                              threshold_list=opt.threshold_list)
     labels = np.concatenate(dataset.labels, 0)
     mlc = int(labels[:, 0].max())  # max label class
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
@@ -223,7 +230,14 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                        rank=-1,
                                        workers=workers * 2,
                                        pad=0.5,
-                                       prefix=colorstr('val: '))[0]
+                                       prefix=colorstr('val: '),
+                                       num_pseudo_imgs=opt.num_pseudo_imgs,
+                                       max_num_pseudo_crops_paste_in=opt.max_num_pseudo_crops_paste_in,
+                                       max_num_crops=opt.max_num_crops,
+                                       maximum_iou=opt.maximum_iou,
+                                       pad_crop=opt.pad_crop,
+                                       zoom_factor=opt.zoom_factor,
+                                       threshold_list=opt.threshold_list)[0]
 
         if not resume:
             # if not opt.noautoanchor:
@@ -481,6 +495,15 @@ def parse_opt(known=False):
     parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
     parser.add_argument('--min-items', type=int, default=0, help='Experimental')
     parser.add_argument('--close-mosaic', type=int, default=0, help='Experimental')
+
+    parser.add_argument('--num-pseudo-imgs', type=int, default=1, help='Paste-in hyps')
+    parser.add_argument('--max-num-pseudo-crops-paste-in', type=int, default=50, help='Paste-in hyps')
+    parser.add_argument('--max-num-crops', type=int, default=100, help='Paste-in hyps')
+    parser.add_argument('--maximum-iou', type=float, default=0.0, help='Paste-in hyps')
+    parser.add_argument('--pad-crop', type=int, default=100, help='Paste-in hyps')
+    parser.add_argument('--zoom-factor', type=float, default=0.5, help='Paste-in hyps')
+    parser.add_argument('--threshold-list', nargs='+', type=float, default=[0.7, 1.0], help='Paste-in hyps')
+
 
     # Logger arguments
     parser.add_argument('--entity', default=None, help='Entity')
