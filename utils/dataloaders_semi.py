@@ -701,7 +701,7 @@ class LoadImagesAndLabels(Dataset):
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
             labels = self.labels[index].copy()
-            print(f'Number of output labels from paste-in crops: {len(output_labels)}')
+            # print(f'Number of output labels from paste-in crops: {len(output_labels)}')
             if len(output_labels):
                 labels = np.concatenate((labels, np.array(output_labels)), axis=0)
             
@@ -777,8 +777,8 @@ class LoadImagesAndLabels(Dataset):
             # Cachinng crops
             self.crops = caching_balance(self.crops, new_crops=new_crops, max_size=self.max_num_crops)
         
-            print(f'Size of the new crops is : {len(new_crops)}')
-            print(f'Size of the caching crops is : {len(self.crops)}')
+            # print(f'Size of the new crops is : {len(new_crops)}')
+            # print(f'Size of the caching crops is : {len(self.crops)}')
         
         # Loads 1 image from dataset index 'i', returns (im, original hw, resized hw)
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i],
@@ -855,7 +855,7 @@ class LoadImagesAndLabels(Dataset):
 
             # Labels
             labels, segments = self.labels[index].copy(), self.segments[index].copy()
-            print(f'Number of output labels from paste-in crops: {len(output_labels)}')
+            # print(f'Number of output labels from paste-in crops: {len(output_labels)}')
             if len(output_labels):
                 labels = np.concatenate((labels, np.array(output_labels)), axis=0)
             
